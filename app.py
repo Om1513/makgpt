@@ -4,14 +4,17 @@ from itertools import cycle
 import openai
 import dotenv
 import os
+import json
 
+with open('company_tickers.json', 'r') as file:
+    data = json.load(file)
 dotenv.load_dotenv()
 API_KEY = os.getenv("TRANSCRIPTS_API_KEY")
 OPEN_AI_API_KEY = os.getenv("OPEN_AI_API_KEY")
 
 st.set_page_config(layout="wide")
 
-def fetch_transcripts_for_ticker(ticker: str,api_key:str) -> list:
+def fetch_transcripts_for_ticker(ticker: str, api_key: str) -> list:
     """
     Fetch earnings transcripts for all 4 quarters of 2024 and 2025 for a single ticker.
     Returns a list of transcripts for the given ticker.
@@ -19,7 +22,6 @@ def fetch_transcripts_for_ticker(ticker: str,api_key:str) -> list:
     years = [2024, 2025]
     quarters = [1, 2, 3, 4]
     transcripts = []
-    api_key = api_key
     
     for year in years:
         for quarter in quarters:
@@ -68,34 +70,50 @@ if "filter_years" not in st.session_state:
 if "filter_quarters" not in st.session_state:
     st.session_state["filter_quarters"] = set() 
 
-ticker_input = st.sidebar.text_input(
-    "Enter Stock Ticker and Press Enter:",
-    value="",
-    key=f"ticker_input_{st.session_state['ticker_input_key']}"
+json_data = data
+
+ticker_options = []
+for key, value in json_data.items():
+    ticker = value["ticker"]
+    title = value["title"]
+    ticker_options.append({"ticker": ticker, "title": title, "label": f"{ticker} - {title}"})
+
+ticker_options.sort(key=lambda x: x["ticker"].lower())
+
+dropdown_options = [option["label"] for option in ticker_options]
+
+dropdown_options.insert(0, "Search by Ticker or Company Name...")
+
+
+selected_label = st.sidebar.selectbox(
+    "**Select a Stock Ticker:**",
+    options=dropdown_options,
+    index=0,
+    key=f"ticker_selectbox_{st.session_state['ticker_input_key']}"
 )
 
-if ticker_input:
-    ticker = ticker_input.strip().upper()
-    if ticker and ticker not in st.session_state["selected_tickers"]:
-        st.session_state["selected_tickers"].append(ticker)
+if selected_label and selected_label != "Search by Ticker or Company Name...":
+    selected_ticker = selected_label.split(" - ")[0]
+    if selected_ticker not in st.session_state["selected_tickers"]:
+        st.session_state["selected_tickers"].append(selected_ticker)
         
         with st.sidebar:
-            with st.spinner(f"Fetching transcripts for {ticker}..."):
-                transcripts = fetch_transcripts_for_ticker(ticker,API_KEY)
+            with st.spinner(f"Fetching transcripts for {selected_ticker}..."):
+                transcripts = fetch_transcripts_for_ticker(selected_ticker, API_KEY)
                 if transcripts:
-                    st.session_state["transcripts_dict"][ticker] = transcripts
+                    st.session_state["transcripts_dict"][selected_ticker] = transcripts
                 else:
-                    st.sidebar.warning(f"No transcripts found for {ticker}.")
-                    st.session_state["selected_tickers"].remove(ticker)  
+                    st.sidebar.warning(f"No transcripts found for {selected_ticker}.")
+                    st.session_state["selected_tickers"].remove(selected_ticker)
         st.session_state["ticker_input_key"] += 1  
-        st.rerun()  
+        st.rerun()
 
 if st.session_state["selected_tickers"]:
     st.sidebar.markdown("**Selected Tickers:**")
     tickers = st.session_state["selected_tickers"]
     num_tickers = len(tickers)
-    tickers_per_row = 4  
-    num_rows = (num_tickers + tickers_per_row - 1) // tickers_per_row 
+    tickers_per_row = 4
+    num_rows = (num_tickers + tickers_per_row - 1) // tickers_per_row
 
     for row in range(num_rows):
         start_idx = row * tickers_per_row
@@ -117,9 +135,9 @@ if st.session_state["selected_tickers"]:
                         st.session_state["chat_history"] = []
                         st.session_state["transcript_summary"] = ""
                         st.session_state["analyzed_transcripts"] = {}
-                    st.rerun()  
+                    st.rerun()
 
-search_query = st.sidebar.text_input("Search Transcript:")
+search_query = st.sidebar.text_input("Search text in Available Transcript:")
 
 selected_transcripts = st.session_state["selected_transcripts"]
 
@@ -186,7 +204,7 @@ if st.session_state["transcripts_dict"]:
         
         for ticker, transcripts in transcripts_by_ticker.items():
             st.markdown(f"### {ticker}")
-            cols = cycle(st.columns(4))  
+            cols = cycle(st.columns(4))
             for transcript in transcripts:
                 col = next(cols)
                 label = f"{transcript['ticker']} FY{transcript['year']} Q{transcript['quarter']} ({transcript['date']})"
@@ -204,7 +222,7 @@ else:
     st.subheader("Available Transcripts")
     st.markdown("**No transcripts selected**")
 
-st.sidebar.subheader("📜 Selected Transcripts")
+st.sidebar.subheader("Selected Transcripts")
 if selected_transcripts:
     for label in selected_transcripts:
         st.sidebar.text(label)
@@ -223,14 +241,6 @@ if selected_transcripts:
                 selected_by_ticker[ticker] = []
             selected_by_ticker[ticker].append(transcript)
             transcript_data += transcript["content"] + "\n\n"
-
-    # Display transcripts grouped by ticker
-    # for ticker, transcripts in selected_by_ticker.items():
-    #     st.markdown(f"### {ticker}")
-    #     for transcript in transcripts:
-    #         label = f"FY{transcript['year']} Q{transcript['quarter']} ({transcript['date']})"
-    #         st.markdown(f"#### {label}")
-    #         st.text_area("", transcript["content"], height=300, key=f"transcript_{ticker}_{label}")
 
 if selected_transcripts:
     new_transcripts = {}
@@ -278,7 +288,7 @@ if selected_transcripts:
         response = client.chat.completions.create(
             model="gpt-4o",
             messages=[
-                {"role": "system", "content": "Your job is to answer questions based on the information provided of the selected earnings calls. For any informatino you provide, if there's a related data point, try to always disclose it in your answer."},
+                {"role": "system", "content": "Your job is to answer questions based on the information provided of the selected earnings calls. For any information you provide, if there's a related data point, try to always disclose it in your answer."},
                 {"role": "system", "content": st.session_state["transcript_summary"]},  
                 {"role": "user", "content": user_query}
             ]
