@@ -6,7 +6,7 @@ import dotenv
 import os
 
 dotenv.load_dotenv()
-API_KEY = os.getenv("transcipts_api_key")
+API_KEY = os.getenv("TRANSCRIPTS_API_KEY")
 OPEN_AI_API_KEY = os.getenv("OPEN_AI_API_KEY")
 
 st.set_page_config(layout="wide")
