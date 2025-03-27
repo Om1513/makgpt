@@ -6,14 +6,19 @@ import dotenv
 import os
 import json
 
+# Open and read the JSON file
 with open('company_tickers.json', 'r') as file:
     data = json.load(file)
-dotenv.load_dotenv()
-API_KEY = os.getenv("TRANSCRIPTS_API_KEY")
-OPEN_AI_API_KEY = os.getenv("OPEN_AI_API_KEY")
 
+# Load environment variables
+dotenv.load_dotenv()
+API_KEY = st.secrets["TRANSCRIPTS_API_KEY"]
+OPEN_AI_API_KEY = st.secrets["OPEN_AI_API_KEY"]
+
+# Set page configuration
 st.set_page_config(layout="wide")
 
+# Function to fetch transcripts for a single ticker
 def fetch_transcripts_for_ticker(ticker: str, api_key: str) -> list:
     """
     Fetch earnings transcripts for all 4 quarters of 2024 and 2025 for a single ticker.
@@ -45,8 +50,10 @@ def fetch_transcripts_for_ticker(ticker: str, api_key: str) -> list:
     
     return transcripts
 
+# Sidebar - User Input
 st.sidebar.title("📊 Financial Transcript Viewer")
 
+# Initialize session state
 if "selected_tickers" not in st.session_state:
     st.session_state["selected_tickers"] = []  
 if "ticker_input_key" not in st.session_state:
@@ -70,21 +77,26 @@ if "filter_years" not in st.session_state:
 if "filter_quarters" not in st.session_state:
     st.session_state["filter_quarters"] = set() 
 
+# Parse the JSON document to extract tickers and company names
 json_data = data
 
+# Extract tickers and company names
 ticker_options = []
 for key, value in json_data.items():
     ticker = value["ticker"]
     title = value["title"]
     ticker_options.append({"ticker": ticker, "title": title, "label": f"{ticker} - {title}"})
 
+# Sort ticker options alphabetically by ticker
 ticker_options.sort(key=lambda x: x["ticker"].lower())
 
+# Create the list of labels for the dropdown
 dropdown_options = [option["label"] for option in ticker_options]
 
+# Add a default option at the start
 dropdown_options.insert(0, "Search by Ticker or Company Name...")
 
-
+# Dropdown for ticker selection
 selected_label = st.sidebar.selectbox(
     "**Select a Stock Ticker:**",
     options=dropdown_options,
@@ -92,6 +104,7 @@ selected_label = st.sidebar.selectbox(
     key=f"ticker_selectbox_{st.session_state['ticker_input_key']}"
 )
 
+# Handle ticker selection
 if selected_label and selected_label != "Search by Ticker or Company Name...":
     selected_ticker = selected_label.split(" - ")[0]
     if selected_ticker not in st.session_state["selected_tickers"]:
@@ -108,6 +121,7 @@ if selected_label and selected_label != "Search by Ticker or Company Name...":
         st.session_state["ticker_input_key"] += 1  
         st.rerun()
 
+# Display selected tickers in rows (4 tickers per row)
 if st.session_state["selected_tickers"]:
     st.sidebar.markdown("**Selected Tickers:**")
     tickers = st.session_state["selected_tickers"]
@@ -137,10 +151,13 @@ if st.session_state["selected_tickers"]:
                         st.session_state["analyzed_transcripts"] = {}
                     st.rerun()
 
+# Search Transcript input
 search_query = st.sidebar.text_input("Search text in Available Transcript:")
 
+# Define selected_transcripts
 selected_transcripts = st.session_state["selected_transcripts"]
 
+# Display Transcripts Grouped by Company Ticker with Filters
 if st.session_state["transcripts_dict"]:
     all_transcripts = []
     for ticker, transcripts in st.session_state["transcripts_dict"].items():
@@ -222,6 +239,7 @@ else:
     st.subheader("Available Transcripts")
     st.markdown("**No transcripts selected**")
 
+# Sidebar Display of Selected Transcripts
 st.sidebar.subheader("Selected Transcripts")
 if selected_transcripts:
     for label in selected_transcripts:
@@ -229,9 +247,9 @@ if selected_transcripts:
 else:
     st.sidebar.text("None selected")
 
+# Prepare Data for Processing
 if selected_transcripts:
     transcript_data = ""
-    
     selected_by_ticker = {}
     for label in selected_transcripts:
         transcript = next((t for t in all_transcripts if f"{t['ticker']} FY{t['year']} Q{t['quarter']} ({t['date']})" == label), None)
@@ -240,8 +258,9 @@ if selected_transcripts:
             if ticker not in selected_by_ticker:
                 selected_by_ticker[ticker] = []
             selected_by_ticker[ticker].append(transcript)
-            transcript_data += transcript["content"] + "\n\n"
+            transcript_data += f"\n\n### {label}\n{transcript['content']}"
 
+# Prompt 1: Generate Summary for New Transcripts
 if selected_transcripts:
     new_transcripts = {}
     for label in selected_transcripts:
@@ -249,25 +268,75 @@ if selected_transcripts:
         if transcript and label not in st.session_state["analyzed_transcripts"]:
             new_transcripts[label] = transcript["content"]
 
+    if new_transcripts:
+        client = openai.OpenAI(api_key=OPEN_AI_API_KEY)
+        
+        with st.spinner("AI is analyzing selected transcripts..."):
+            # Prepare the prompt for summarizing the transcripts
+            prompt_1 = """
+You are a fundamental analyst with 5+ years of buy-side experience. Your purpose is to read earnings call transcripts and provide a summary for a financial analyst focused on fundamental equity research. Use only information directly from the transcript. Do not infer or fabricate data beyond what is explicitly mentioned. Prioritize clarity and brevity, but disclose figures (numbers, percentages) when citing any important point. Use bullet points when helpful. If a section (e.g., drivers of Margins) is not addressed in the transcript, clearly state ‘Not disclosed in call.’
+
+**Output Structure:**
+- Start with a one-paragraph summarization of the overall takeaway.
+- Then, provide a more in-depth output organized by each period reported (e.g., Q1 2024, FY 2024).
+- For each period, separate into two buckets: Topline and Margins.
+  - Topline: Include Revenue growth, Gross Volume, or other topline KPIs.
+  - Margins: Include Gross Margin, EBIT or Operating Margin, Net Margin, etc.
+- For each period, provide a section with the most important questions asked by analysts during the call and management’s summarized answers (summarize only the answer, not the question).
+
+**Example Output:**
+Overall Takeaway:  
+ABC Corp margins have been declining over the last few quarters (Q1, Q2, Q3 and Q4 of 2024) primarily due to (a) higher freight costs, (b) higher SG&A expenses – due to higher performance bonus, and (c) an increase in markdowns due to more promotional environment.  
+
+Q4 2024  
+Topline  
+- Revenue grew +12% YoY (vs. +10% cons.), driven by:  
+- +18% international growth (Europe +25%, APAC +15%)  
+- Pricing contributed +4pts; volume flat overall  
+- Core product A saw +20% YoY growth, while Product B declined -5%  
+- Management cited stronger-than-expected holiday demand and FX tailwinds (+1pt)  
+
+Margins  
+- Gross margin compressed 180bps YoY to 52.1% (vs. 53.5% cons.)  
+- Driven by +200bps in higher freight and warehousing costs  
+- Partially offset by +50bps from favorable mix  
+- EBIT margin fell to 18.4% (vs. 20.0% cons.)  
+- Impacted by $30M restructuring charge (non-recurring)  
+- Net margin at 13.5%, down 150bps YoY  
+
+Key questions asked  
+- Q: “Can you walk us through how much of the gross margin pressure is expected to persist into FY 2025?”  
+  A (Summary): freight cost impacted 200bps, and higher promotional due to competitors higher discounts in the second half of 2025.  
+- Q: “What assumptions underlie the conservative FY 2025 revenue guide?”  
+  A (Summary): assume no macro improvement and no buybacks. Only the demand we see Today.
+
+Analyze the following transcripts and provide the summary as per the structure above:
+"""
+            # Combine all new transcripts into the prompt
+            prompt_1 += transcript_data
+
+            # Call the OpenAI API to generate the summary
+            response = client.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {"role": "system", "content": prompt_1}
+                ]
+            )
+            summary = response.choices[0].message.content
+
+            # Store the summary in session state
+            st.session_state["transcript_summary"] = summary
+            for label in new_transcripts.keys():
+                st.session_state["analyzed_transcripts"][label] = summary
+
+# Display the Transcript Summary (Always, if it exists)
+if selected_transcripts and st.session_state["transcript_summary"]:
+    st.subheader("📝 Transcript Summary")
+    st.markdown(st.session_state["transcript_summary"])
+
+# Prompt 2: Chatbot for Answering User Queries
 if selected_transcripts:
     st.subheader("💬 Chat with AI about Selected Transcripts")
-
-    client = openai.OpenAI(api_key=OPEN_AI_API_KEY)
-    
-    if new_transcripts:
-        with st.spinner("AI is analyzing new transcripts..."):
-            for label, content in new_transcripts.items():
-                response = client.chat.completions.create(
-                    model="gpt-4o",
-                    messages=[
-                        {"role": "system", "content": "Read the following earnings call transcript and analyze the company's performance:"},
-                        {"role": "user", "content": content}
-                    ]
-                )
-                summary = response.choices[0].message.content
-
-                st.session_state["transcript_summary"] += f"\n\n{summary}"
-                st.session_state["analyzed_transcripts"][label] = summary  
 
     chat_container = st.container()
 
@@ -285,11 +354,20 @@ if selected_transcripts:
             with st.chat_message("user"):
                 st.markdown(f"{user_query}")
 
+        # Prepare the prompt for answering user queries
+        prompt_2 = """
+You are a fundamental analyst with 5+ years of buy-side experience. Your purpose is to answer questions based on the information provided in the selected earnings call transcripts for a financial analyst focused on fundamental equity research. Use only information directly from the transcript. Do not infer or fabricate data beyond what is explicitly mentioned. Prioritize clarity and brevity, but disclose figures (numbers, percentages) when citing any important point. Use bullet points when helpful. If a section or data point is not addressed in the transcript, clearly state ‘Not disclosed in call.’ Assume the user is an experienced portfolio manager.
+
+Analyze the following transcripts and answer the user's question:
+"""
+        prompt_2 += transcript_data
+        client = openai.OpenAI(api_key=OPEN_AI_API_KEY)
+
+        # Call the OpenAI API to answer the user's query
         response = client.chat.completions.create(
             model="gpt-4o",
             messages=[
-                {"role": "system", "content": "Your job is to answer questions based on the information provided of the selected earnings calls. For any information you provide, if there's a related data point, try to always disclose it in your answer."},
-                {"role": "system", "content": st.session_state["transcript_summary"]},  
+                {"role": "system", "content": prompt_2},
                 {"role": "user", "content": user_query}
             ]
         )
