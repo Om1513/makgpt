@@ -231,7 +231,6 @@ if st.session_state["transcripts_dict"]:
                             selected_transcripts.remove(label)
                         else:
                             selected_transcripts.add(label)
-        
         st.session_state["selected_transcripts"] = selected_transcripts
     else:
         st.markdown("**No transcripts match the selected filters.**")
@@ -270,10 +269,20 @@ if selected_transcripts:
 
     if new_transcripts:
         client = openai.OpenAI(api_key=OPEN_AI_API_KEY)
-        
-        with st.spinner("AI is analyzing selected transcripts..."):
-            # Prepare the prompt for summarizing the transcripts
-            prompt_1 = """
+        batch_size = 2  # Adjust based on length of transcripts (you can tune this)
+
+        all_labels = list(new_transcripts.keys())
+        all_contents = list(new_transcripts.values())
+
+        batched_summary = ""
+        with st.spinner("AI is analyzing selected transcripts in batches..."):
+
+            for i in range(0, len(all_contents), batch_size):
+                batch_labels = all_labels[i:i + batch_size]
+                batch_contents = all_contents[i:i + batch_size]
+
+                # Prepare the prompt
+                prompt_1 = """
 You are a fundamental analyst with 5+ years of buy-side experience. Your purpose is to read earnings call transcripts and provide a summary for a financial analyst focused on fundamental equity research. Use only information directly from the transcript. Do not infer or fabricate data beyond what is explicitly mentioned. Prioritize clarity and brevity, but disclose figures (numbers, percentages) when citing any important point. Use bullet points when helpful. If a section (e.g., drivers of Margins) is not addressed in the transcript, clearly state ‘Not disclosed in call.’
 
 **Output Structure:**
@@ -312,22 +321,27 @@ Key questions asked
 
 Analyze the following transcripts and provide the summary as per the structure above:
 """
-            # Combine all new transcripts into the prompt
-            prompt_1 += transcript_data
 
-            # Call the OpenAI API to generate the summary
-            response = client.chat.completions.create(
-                model="gpt-4o",
-                messages=[
-                    {"role": "system", "content": prompt_1}
-                ]
-            )
-            summary = response.choices[0].message.content
+                # Combine transcripts for this batch
+                for j, content in enumerate(batch_contents):
+                    prompt_1 += f"\n\n### {batch_labels[j]}\n{content}"
 
-            # Store the summary in session state
-            st.session_state["transcript_summary"] = summary
-            for label in new_transcripts.keys():
-                st.session_state["analyzed_transcripts"][label] = summary
+                # Call OpenAI API
+                response = client.chat.completions.create(
+                    model="gpt-4o",
+                    messages=[{"role": "system", "content": prompt_1}]
+                )
+
+                batch_summary = response.choices[0].message.content
+                batched_summary += batch_summary + "\n\n"
+
+                # Save to analyzed transcripts
+                for label in batch_labels:
+                    st.session_state["analyzed_transcripts"][label] = batch_summary
+
+        # Store the full combined summary
+        st.session_state["transcript_summary"] = batched_summary
+
 
 # Display the Transcript Summary (Always, if it exists)
 if selected_transcripts and st.session_state["transcript_summary"]:
