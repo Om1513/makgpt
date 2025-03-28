@@ -350,7 +350,7 @@ if selected_transcripts and st.session_state["transcript_summary"]:
 
 # Prompt 2: Chatbot for Answering User Queries
 if selected_transcripts:
-    st.subheader("💬 Chat with AI about Selected Transcripts")
+    st.subheader("\U0001F4AC Chat with AI about Selected Transcripts")
 
     chat_container = st.container()
 
@@ -368,27 +368,26 @@ if selected_transcripts:
             with st.chat_message("user"):
                 st.markdown(f"{user_query}")
 
-        # Prepare the prompt for answering user queries
-        prompt_2 = """
-You are a fundamental analyst with 5+ years of buy-side experience. Your purpose is to answer questions based on the information provided in the selected earnings call transcripts for a financial analyst focused on fundamental equity research. Use only information directly from the transcript. Do not infer or fabricate data beyond what is explicitly mentioned. Prioritize clarity and brevity, but disclose figures (numbers, percentages) when citing any important point. Use bullet points when helpful. If a section or data point is not addressed in the transcript, clearly state ‘Not disclosed in call.’ Assume the user is an experienced portfolio manager.
-
-Analyze the following transcripts and answer the user's question:
-"""
-        prompt_2 += transcript_data
         client = openai.OpenAI(api_key=OPEN_AI_API_KEY)
 
-        # Call the OpenAI API to answer the user's query
+        # Use transcript_summary as context to avoid repeating transcripts
+        summary_context = st.session_state.get("transcript_summary", "")
+
         response = client.chat.completions.create(
             model="gpt-4o",
             messages=[
-                {"role": "system", "content": prompt_2},
+                {
+                    "role": "system",
+                    "content": "You are a fundamental analyst with 5+ years of buy-side experience. Your purpose is to answer questions based on the summarized earnings call transcripts for a financial analyst focused on fundamental equity research. Use only information from the summary. Do not infer or fabricate beyond what is mentioned. Prioritize clarity, brevity, and include figures when possible."
+                },
+                {"role": "system", "content": summary_context},
                 {"role": "user", "content": user_query}
             ]
         )
-        answer = response.choices[0].message.content
+        combined_answer = response.choices[0].message.content.strip()
 
         with chat_container:
             with st.chat_message("assistant"):
-                st.markdown(f"{answer}")
+                st.markdown(combined_answer)
 
-        st.session_state["chat_history"].append((user_query, answer))
+        st.session_state["chat_history"].append((user_query, combined_answer))
